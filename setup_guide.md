@@ -9,6 +9,8 @@ your_project/
 └── templates/
     └── index.html     # Frontend template
 ```
+![Uploading Screenshot 2025-06-27 114250.png…]()
+
 
 ## Setup Instructions
 
