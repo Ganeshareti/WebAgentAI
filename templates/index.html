@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="/static/style.css">
+    <title>AI Assistant - Chat & Web Agent</title>
+    
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AI Assistant</h1>
+            <div class="mode-toggle">
+                <button class="mode-btn active" id="chatMode">💬 Chat Mode</button>
+                <button class="mode-btn" id="webAgentMode">🌐 Web Agent</button>
+            </div>
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Ready</span>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="messages" id="messages">
+                <div class="message bot">
+                    <div class="message-bubble">
+                        Hello! I'm your AI assistant. I can chat with you or help you browse the web. Choose a mode above to get started.
+                    </div>
+                </div>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>Processing your request...</div>
+            </div>
+
+            <div class="input-container">
+                <div class="input-group">
+                    <input type="text" class="message-input" id="messageInput" 
+                           placeholder="Type your message..." autocomplete="off">
+                    <button class="send-btn" id="sendBtn">Send</button>
+                    <button class="stop-btn" id="stopBtn">Stop</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class ChatInterface {
+            constructor() {
+                this.currentMode = 'chat';
+                this.isProcessing = false;
+                this.agentRunning = false;
+                this.statusCheckInterval = null;
+                this.initializeElements();
+                this.bindEvents();
+            }
+
+            initializeElements() {
+                this.messagesContainer = document.getElementById('messages');
+                this.messageInput = document.getElementById('messageInput');
+                this.sendBtn = document.getElementById('sendBtn');
+                this.stopBtn = document.getElementById('stopBtn');
+                this.chatModeBtn = document.getElementById('chatMode');
+                this.webAgentModeBtn = document.getElementById('webAgentMode');
+                this.statusDot = document.getElementById('statusDot');
+                this.statusText = document.getElementById('statusText');
+                this.loading = document.getElementById('loading');
+            }
+
+            bindEvents() {
+                this.sendBtn.addEventListener('click', () => this.sendMessage());
+                this.stopBtn.addEventListener('click', () => this.stopAgent());
+                this.messageInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') this.sendMessage();
+                });
+                this.chatModeBtn.addEventListener('click', () => this.switchMode('chat'));
+                this.webAgentModeBtn.addEventListener('click', () => this.switchMode('webAgent'));
+            }
+
+            switchMode(mode) {
+                this.currentMode = mode;
+                
+                // Update button states
+                this.chatModeBtn.classList.toggle('active', mode === 'chat');
+                this.webAgentModeBtn.classList.toggle('active', mode === 'webAgent');
+                
+                // Update placeholder text
+                if (mode === 'chat') {
+                    this.messageInput.placeholder = 'Type your message...';
+                    this.addMessage('bot', 'Switched to Chat Mode. Ask me anything!');
+                } else {
+                    this.messageInput.placeholder = 'Describe what you want me to do on the web...';
+                    this.addMessage('bot', 'Switched to Web Agent Mode. Tell me what you\'d like me to do on the web!');
+                }
+                
+                this.updateStatus('Ready');
+            }
+
+            async sendMessage() {
+                const message = this.messageInput.value.trim();
+                if (!message || this.isProcessing) return;
+
+                this.addMessage('user', message);
+                this.messageInput.value = '';
+                this.setProcessing(true);
+
+                try {
+                    if (this.currentMode === 'chat') {
+                        await this.sendChatMessage(message);
+                    } else {
+                        await this.sendWebAgentTask(message);
+                    }
+                } catch (error) {
+                    this.addMessage('bot', `Error: ${error.message}`);
+                } finally {
+                    this.setProcessing(false);
+                }
+            }
+
+            async sendChatMessage(message) {
+                this.updateStatus('Thinking...', 'active');
+                
+                try {
+                    const response = await fetch('/chat', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ message: message })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    this.addMessage('bot', data.response);
+                } catch (error) {
+                    this.addMessage('bot', `Chat error: ${error.message}`);
+                } finally {
+                    this.updateStatus('Ready');
+                }
+            }
+
+            async sendWebAgentTask(task) {
+                this.updateStatus('Starting web agent...', 'agent-running');
+                this.agentRunning = true;
+                this.showStopButton();
+
+                try {
+                    const response = await fetch('/web-agent', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ task: task })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    this.addMessage('bot', data.response);
+                    
+                    // Start polling for agent status
+                    this.startStatusPolling();
+                    
+                } catch (error) {
+                    this.addMessage('bot', `Agent error: ${error.message}`);
+                    this.agentRunning = false;
+                    this.hideStopButton();
+                    this.updateStatus('Ready');
+                }
+            }
+
+            startStatusPolling() {
+                this.statusCheckInterval = setInterval(async () => {
+                    try {
+                        const response = await fetch('/agent-status');
+                        const status = await response.json();
+                        
+                        if (status.completed && status.result) {
+                            this.addMessage('bot', status.result);
+                            this.stopStatusPolling();
+                            this.agentRunning = false;
+                            this.hideStopButton();
+                            this.updateStatus('Ready');
+                        } else if (!status.running) {
+                            this.stopStatusPolling();
+                            this.agentRunning = false;
+                            this.hideStopButton();
+                            this.updateStatus('Ready');
+                        }
+                    } catch (error) {
+                        console.error('Status check error:', error);
+                    }
+                }, 2000); // Check every 2 seconds
+            }
+
+            stopStatusPolling() {
+                if (this.statusCheckInterval) {
+                    clearInterval(this.statusCheckInterval);
+                    this.statusCheckInterval = null;
+                }
+            }
+
+            async stopAgent() {
+                if (!this.agentRunning) return;
+
+                this.updateStatus('Stopping agent...', 'active');
+                
+                try {
+                    const response = await fetch('/stop-agent', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        }
+                    });
+
+                    const data = await response.json();
+                    this.addMessage('bot', data.response || 'Agent stopped.');
+                    
+                } catch (error) {
+                    this.addMessage('bot', `Stop error: ${error.message}`);
+                } finally {
+                    this.stopStatusPolling();
+                    this.agentRunning = false;
+                    this.hideStopButton();
+                    this.updateStatus('Ready');
+                }
+            }
+
+            addMessage(sender, text) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${sender}`;
+                
+                const bubbleDiv = document.createElement('div');
+                bubbleDiv.className = 'message-bubble';
+                bubbleDiv.textContent = text;
+                
+                messageDiv.appendChild(bubbleDiv);
+                this.messagesContainer.appendChild(messageDiv);
+                
+                // Force scroll to bottom with a small delay to ensure rendering
+                setTimeout(() => {
+                    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+                }, 10);
+            }
+
+            setProcessing(processing) {
+                this.isProcessing = processing;
+                this.sendBtn.disabled = processing;
+                this.messageInput.disabled = processing;
+                
+                // Don't hide messages container during web agent operations
+                if (processing && this.currentMode === 'chat') {
+                    this.loading.classList.add('show');
+                    this.messagesContainer.style.display = 'none';
+                } else {
+                    this.loading.classList.remove('show');
+                    this.messagesContainer.style.display = 'flex';
+                }
+            }
+
+            showStopButton() {
+                this.sendBtn.style.display = 'none';
+                this.stopBtn.style.display = 'block';
+            }
+
+            hideStopButton() {
+                this.sendBtn.style.display = 'block';
+                this.stopBtn.style.display = 'none';
+            }
+
+            updateStatus(text, dotClass = '') {
+                this.statusText.textContent = text;
+                this.statusDot.className = `status-dot ${dotClass}`;
+            }
+        }
+
+        // Initialize the chat interface when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            new ChatInterface();
+        });
+    </script>
+</body>
+</html>
